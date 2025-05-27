@@ -1,45 +1,56 @@
-
 import logging
 import os
+from pathlib import Path
 from aiogram import Bot, Dispatcher, types
 from aiogram.utils import executor
+from aiogram.types import Message
+from openai import AsyncOpenAI
 from dotenv import load_dotenv
-import openai
 
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-
-openai.api_key = OPENAI_API_KEY
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher(bot)
-
 SYSTEM_PROMPT = Path("prompt.txt").read_text()
 
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher(bot)
+client = AsyncOpenAI(api_key=OPENAI_API_KEY)
+
+user_sessions = {}
+
 @dp.message_handler(commands=["start"])
-async def start_handler(message: types.Message):
-    user_text = "Пользователь только что нажал /start. Поздоровайся, представься, пригласи к диалогу, подчеркни анонимность."
-    reply = await generate_reply(user_text)
-    await message.answer(reply)
+async def start(message: Message):
+    await message.answer("Привет. Я Вера. Я здесь, чтобы быть рядом. Ты можешь быть анонимным, если хочешь. Расскажи, что у тебя сейчас на сердце 💜")
+    user_sessions[message.from_user.id] = []
 
 @dp.message_handler()
-async def message_handler(message: types.Message):
-    reply = await generate_reply(message.text)
-    await message.answer(reply)
+async def chat(message: Message):
+    user_id = message.from_user.id
+    if user_id not in user_sessions:
+        user_sessions[user_id] = []
 
-async def generate_reply(user_message: str) -> str:
+    history = user_sessions[user_id]
+
+    history.append({"role": "user", "content": message.text})
+
     try:
-        response = openai.ChatCompletion.create(
+        response = await client.chat.completions.create(
             model="gpt-4",
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user_message}
-            ]
+                *history
+            ],
+            temperature=0.8,
         )
-        return response.choices[0].message["content"]
+
+        reply = response.choices[0].message.content
+        await message.answer(reply)
+        history.append({"role": "assistant", "content": reply})
+
     except Exception as e:
-        return "Прости, что-то пошло не так... Попробуй ещё раз позже 🙏"
+        await message.answer("Прости, что-то пошло не так. Попробуй ещё раз чуть позже 🙏")
+        logging.exception("OpenAI API error")
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
